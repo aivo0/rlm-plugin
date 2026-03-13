@@ -88,7 +88,21 @@ Restart Claude Code. The rlm agent should appear under Plugin agents in `/agents
 
 ## Usage
 
-The RLM agent activates automatically when Claude Code determines that a task involves large contexts. You can also invoke it explicitly:
+### Slash command
+
+Use `/rlm` to invoke the agent directly with arguments:
+
+```
+/rlm ~/Downloads/report.pdf summarize each chapter
+```
+
+```
+/rlm /tmp/server.log find all error patterns and group by severity
+```
+
+### Natural language
+
+The RLM agent also activates automatically when Claude Code determines that a task involves large contexts:
 
 ```
 Analyze the 200K-line log file at /tmp/server.log and find all error patterns
@@ -198,6 +212,8 @@ rlm-plugin/
 ├── rlm_runtime.py       # Runtime library used by agent scripts
 ├── agents/
 │   └── rlm.md           # Agent definition (system prompt + tools)
+├── commands/
+│   └── rlm.md           # /rlm slash command (delegates to agent)
 └── benchmarks/
     ├── batch.py                 # Batch benchmark runner with scoring
     ├── oolong_synth.py          # Oolong Synth single-example benchmark
@@ -211,7 +227,7 @@ rlm-plugin/
 
 ## References
 
-- **Recursive LLM (RLM)**: Lee, S., Kim, H., & Yun, S. (2025). *Can LLMs Handle Unlimited Context? Benchmark and Solution for LLMs with Recursive LLM*. [arXiv:2502.12820](https://arxiv.org/abs/2502.12820)
+- **Recursive Language Models (RLM)**: Zhang, A. L., Kraska, T., & Khattab, O. (2025). *Recursive Language Models*. [arXiv:2512.24601](https://arxiv.org/abs/2512.24601)
 - **rlm-cli**: This plugin was inspired by [rlm-cli](https://github.com/viplismism/rlm-cli) by viplismism.
 
 ## License

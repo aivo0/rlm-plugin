@@ -54,12 +54,14 @@ def context_meta(text: str) -> str:
 def llm_query(chunk: str, instruction: str, timeout: int = 120) -> str:
     """Run a synchronous sub-query via claude -p. Returns stdout."""
     prompt = f"{instruction}\n\n---\n\n{chunk}"
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     result = subprocess.run(
         ["claude", "-p"],
         input=prompt,
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(f"claude -p failed (rc={result.returncode}): {result.stderr}")
@@ -69,11 +71,13 @@ def llm_query(chunk: str, instruction: str, timeout: int = 120) -> str:
 async def async_llm_query(chunk: str, instruction: str, timeout: int = 120) -> str:
     """Run an async sub-query via claude -p. Use with asyncio.gather() for parallelism."""
     prompt = f"{instruction}\n\n---\n\n{chunk}"
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     proc = await asyncio.create_subprocess_exec(
         "claude", "-p",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     try:
         stdout, stderr = await asyncio.wait_for(
