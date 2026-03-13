@@ -50,7 +50,7 @@ claude plugin add /path/to/rlm-plugin
 Clone the repo and symlink it into your local plugins directory:
 
 ```bash
-git clone https://github.com/YOUR_USER/rlm-plugin.git
+git clone https://github.com/aivo0/rlm-plugin.git
 mkdir -p ~/.claude/plugins/local/plugins
 ln -s "$(pwd)/rlm-plugin" ~/.claude/plugins/local/plugins/rlm
 ```
