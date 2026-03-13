@@ -9,24 +9,24 @@ Large file / dataset
         │
         ▼
   ┌─────────────┐
-  │  Load into   │  rlm_runtime.load_context()
-  │  Python      │
+  │  Load into  │  rlm_runtime.load_context()
+  │  Python     │
   └──────┬──────┘
          │
          ▼
   ┌─────────────┐
-  │  Chunk       │  Split into 3–8K char pieces
+  │  Chunk      │  Split into 3–8K char pieces
   └──────┬──────┘
          │
          ▼
   ┌─────────────┐
-  │  Sub-query   │  Parallel claude -p calls via
-  │  each chunk  │  rlm_runtime.async_llm_query()
+  │  Sub-query  │  Parallel claude -p calls via
+  │  each chunk │  rlm_runtime.async_llm_query()
   └──────┬──────┘
          │
          ▼
   ┌─────────────┐
-  │  Synthesize  │  Merge / reduce / re-chunk
+  │  Synthesize │  Merge / reduce / re-chunk
   └──────┬──────┘  if still too large
          │
          ▼
@@ -130,7 +130,7 @@ The `benchmarks/` directory contains evaluation scripts that compare direct LLM 
 
 Dependencies (`datasets`, `numpy`) are auto-installed into a `.venv` on first run.
 
-### Running
+### Single example
 
 ```bash
 # Oolong Synth — synthetic long-context tasks
@@ -142,7 +142,37 @@ python3 benchmarks/longbench_narrativeqa.py
 python3 benchmarks/longbench_narrativeqa.py --idx 199
 ```
 
-Each run prints a side-by-side comparison and saves a trajectory JSON to `trajectories/`.
+### Batch benchmark
+
+Run multiple examples and compute aggregate scores (token F1, exact match, contains match).
+
+```bash
+# 10 random samples (default)
+python3 benchmarks/batch.py longbench
+python3 benchmarks/batch.py oolong -n 20
+
+# Specific indices
+python3 benchmarks/batch.py longbench --indices 5,42,99,182
+
+# Full dataset
+python3 benchmarks/batch.py oolong --all
+
+# Quiet mode — compact output, just scores per example + summary table
+python3 benchmarks/batch.py longbench -n 20 -q
+
+# Custom random seed
+python3 benchmarks/batch.py oolong -n 10 --seed 123
+```
+
+The batch runner prints an aggregate comparison table and per-example F1 breakdown, then saves full results to `trajectories/batch-{dataset}-n{N}-{timestamp}.json`.
+
+### Scoring metrics
+
+| Metric | Description |
+|---|---|
+| **Judge** | LLM-as-judge via `claude -p` — scores whether the prediction conveys the correct key facts (1.0/0.5/0.0). Primary metric. |
+| **Contains** | 1.0 if all reference tokens appear in the prediction |
+| **F1** | Token-level F1 between predicted and reference answers (penalizes verbose answers) |
 
 ## Project structure
 
@@ -153,13 +183,20 @@ rlm-plugin/
 ├── agents/
 │   └── rlm.md           # Agent definition (system prompt + tools)
 └── benchmarks/
-    ├── oolong_synth.py          # Oolong Synth benchmark
-    ├── longbench_narrativeqa.py # LongBench NarrativeQA benchmark
-    ├── _rlm_bench.py            # Shared benchmark runner
+    ├── batch.py                 # Batch benchmark runner with scoring
+    ├── oolong_synth.py          # Oolong Synth single-example benchmark
+    ├── longbench_narrativeqa.py # LongBench NarrativeQA single-example benchmark
+    ├── _rlm_bench.py            # Shared benchmark runner (Direct LLM vs RLM)
+    ├── _scoring.py              # Token F1, exact match, contains match
     ├── _display.py              # Terminal display helpers
     ├── _venv.py                 # Auto venv setup
     └── requirements.txt         # Benchmark Python deps
 ```
+
+## References
+
+- **Recursive LLM (RLM)**: Lee, S., Kim, H., & Yun, S. (2025). *Can LLMs Handle Unlimited Context? Benchmark and Solution for LLMs with Recursive LLM*. [arXiv:2502.12820](https://arxiv.org/abs/2502.12820)
+- **rlm-cli**: This plugin was inspired by [rlm-cli](https://github.com/viplismism/rlm-cli) by viplismism.
 
 ## License
 

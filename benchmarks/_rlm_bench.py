@@ -18,9 +18,12 @@ from benchmarks._display import (
     BOX_W, MAX_CONTENT_W, Spinner, display_bar, display_box,
     format_size, wrap_text, box_top, box_bottom, box_line,
 )
+from benchmarks._scoring import token_f1, exact_match, contains_match, llm_judge
 
 CHUNK_SIZE = 6000  # characters per chunk
 
+
+DIRECT_LLM_TIMEOUT = 600  # 10 minutes max for direct LLM
 
 def run_direct_llm(context: str, question: str) -> tuple[str, float]:
     """Run direct LLM via claude -p. Returns (answer, elapsed_seconds)."""
@@ -30,6 +33,7 @@ def run_direct_llm(context: str, question: str) -> tuple[str, float]:
         ["claude", "-p"],
         input=prompt,
         capture_output=True, text=True,
+        timeout=DIRECT_LLM_TIMEOUT,
     )
     elapsed = time.time() - t
     if result.returncode != 0:
@@ -59,7 +63,7 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE) -> list[str]:
     return chunks
 
 
-async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
+async def run_rlm(context: str, question: str, verbose: bool = True) -> tuple[str, float, int, int]:
     """Run RLM pattern using rlm_runtime. Returns (answer, elapsed_s, iterations, sub_queries)."""
     t = time.time()
 
@@ -75,12 +79,14 @@ async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
 
     # Step 2: Inspect
     meta = rlm_runtime.context_meta(ctx)
-    print(f"    {DIM}{meta.split(chr(10))[1].strip()}, {meta.split(chr(10))[2].strip()}{RESET}")
+    if verbose:
+        print(f"    {DIM}{meta.split(chr(10))[1].strip()}, {meta.split(chr(10))[2].strip()}{RESET}")
 
     # Step 3: Chunk
     chunks = chunk_text(ctx)
     n_chunks = len(chunks)
-    print(f"    {DIM}Split into {n_chunks} chunks (~{CHUNK_SIZE} chars each){RESET}")
+    if verbose:
+        print(f"    {DIM}Split into {n_chunks} chunks (~{CHUNK_SIZE} chars each){RESET}")
 
     # Step 4: Sub-query each chunk in parallel
     instruction = (
@@ -90,9 +96,12 @@ async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
         f"If it contains no relevant information, respond with: NO_RELEVANT_INFO"
     )
 
-    print(f"    {CYAN}Running {n_chunks} parallel sub-queries...{RESET}")
+    if verbose:
+        print(f"    {CYAN}Running {n_chunks} parallel sub-queries...{RESET}")
+
     spinner = Spinner()
-    spinner.start(f"Processing {n_chunks} chunks")
+    if verbose:
+        spinner.start(f"Processing {n_chunks} chunks")
 
     tasks = [
         rlm_runtime.async_llm_query(chunk, instruction)
@@ -107,11 +116,13 @@ async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
     for i, r in enumerate(results):
         if isinstance(r, Exception):
             errors += 1
-            print(f"    {RED}Chunk {i + 1} failed: {r}{RESET}")
+            if verbose:
+                print(f"    {RED}Chunk {i + 1} failed: {r}{RESET}")
         elif "NO_RELEVANT_INFO" not in r and r.strip():
             relevant.append(r.strip())
 
-    print(f"    {GREEN}{len(relevant)}{RESET}{DIM} relevant results, {errors} errors{RESET}")
+    if verbose:
+        print(f"    {GREEN}{len(relevant)}{RESET}{DIM} relevant results, {errors} errors{RESET}")
 
     # Step 5: Synthesize
     if not relevant:
@@ -127,18 +138,21 @@ async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
                 f"Excerpts:\n{combined}\n\n"
                 f"Provide a concise, direct answer."
             )
-            spinner.start("Synthesizing final answer")
+            if verbose:
+                spinner.start("Synthesizing final answer")
             answer = rlm_runtime.llm_query("", synthesis_prompt)
             spinner.stop()
         else:
             # Need another round of reduction
-            print(f"    {CYAN}Combined results too large ({format_size(len(combined))}), reducing...{RESET}")
+            if verbose:
+                print(f"    {CYAN}Combined results too large ({format_size(len(combined))}), reducing...{RESET}")
             sub_chunks = chunk_text(combined, chunk_size=8000)
             reduce_instruction = (
                 f"Summarize the key facts relevant to this question: {question}\n\n"
                 f"Be concise but preserve all relevant details."
             )
-            spinner.start(f"Reducing {len(sub_chunks)} sub-results")
+            if verbose:
+                spinner.start(f"Reducing {len(sub_chunks)} sub-results")
             reduce_tasks = [
                 rlm_runtime.async_llm_query(sc, reduce_instruction)
                 for sc in sub_chunks
@@ -156,7 +170,8 @@ async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
                 f"{reduced_text}\n\n"
                 f"Provide a concise, direct answer."
             )
-            spinner.start("Synthesizing final answer")
+            if verbose:
+                spinner.start("Synthesizing final answer")
             answer = rlm_runtime.llm_query("", synthesis_prompt)
             spinner.stop()
             n_chunks += len(sub_chunks)
@@ -167,6 +182,19 @@ async def run_rlm(context: str, question: str) -> tuple[str, float, int, int]:
     return answer, elapsed, iterations, n_chunks
 
 
+def score_result(prediction: str, expected, question: str = "") -> dict:
+    """Score a prediction against expected answer(s). Returns dict of metrics."""
+    refs = expected if isinstance(expected, list) else [expected]
+    scores = {
+        "f1": token_f1(prediction, refs),
+        "exact_match": exact_match(prediction, refs),
+        "contains": contains_match(prediction, refs),
+    }
+    if question:
+        scores["judge"] = llm_judge(question, prediction, refs)
+    return scores
+
+
 def run_benchmark(
     benchmark_name: str,
     dataset_label: str,
@@ -174,69 +202,111 @@ def run_benchmark(
     context: str,
     question: str,
     expected,
-) -> None:
-    """Run a full benchmark: direct LLM vs RLM, display comparison, save trajectory."""
+    verbose: bool = True,
+) -> dict:
+    """Run a full benchmark: direct LLM vs RLM, display comparison, save trajectory.
 
-    print(f"\n  {CYAN}{BOLD}{benchmark_name}{RESET}")
-    print(f"  {DIM}Dataset: {dataset_label} | Index: {idx}{RESET}")
-    print(f"  {GREEN}✓{RESET} Loaded: context={format_size(len(context))} chars")
-    print(f"  {DIM}Question: {question[:80]}{'...' if len(question) > 80 else ''}{RESET}")
-    print(f"  {DIM}Expected: {json.dumps(expected) if isinstance(expected, list) else expected}{RESET}\n")
+    Returns a result dict with answers, timing, and scores.
+    """
+    if verbose:
+        print(f"\n  {CYAN}{BOLD}{benchmark_name}{RESET}")
+        print(f"  {DIM}Dataset: {dataset_label} | Index: {idx}{RESET}")
+        print(f"  {GREEN}✓{RESET} Loaded: context={format_size(len(context))} chars")
+        print(f"  {DIM}Question: {question[:80]}{'...' if len(question) > 80 else ''}{RESET}")
+        print(f"  {DIM}Expected: {json.dumps(expected) if isinstance(expected, list) else expected}{RESET}\n")
 
     # ── Direct LLM ──────────────────────────────────────────────────────────
-    display_bar("Direct LLM", "(no RLM)", MAGENTA)
+    if verbose:
+        display_bar("Direct LLM", "(no RLM)", MAGENTA)
 
     spinner = Spinner()
-    spinner.start("Generating response")
+    if verbose:
+        spinner.start("Generating response")
     try:
         direct_text, direct_time = run_direct_llm(context, question)
     except Exception as e:
         spinner.stop()
-        print(f"  {RED}Direct LLM failed: {e}{RESET}")
+        if verbose:
+            print(f"  {RED}Direct LLM failed: {e}{RESET}")
         direct_text, direct_time = f"ERROR: {e}", 0.0
     spinner.stop()
 
-    display_box(f"✔ Direct Result  {DIM}{direct_time:.1f}s", direct_text, MAGENTA)
-    print()
+    if verbose:
+        display_box(f"✔ Direct Result  {DIM}{direct_time:.1f}s", direct_text, MAGENTA)
+        print()
 
     # ── RLM ──────────────────────────────────────────────────────────────────
-    display_bar("RLM", "(rlm_runtime)", BLUE)
+    if verbose:
+        display_bar("RLM", "(rlm_runtime)", BLUE)
 
     try:
         rlm_text, rlm_time, iterations, sub_queries = asyncio.run(
-            run_rlm(context, question)
+            run_rlm(context, question, verbose=verbose)
         )
     except Exception as e:
-        print(f"  {RED}RLM failed: {e}{RESET}")
+        if verbose:
+            print(f"  {RED}RLM failed: {e}{RESET}")
         rlm_text, rlm_time, iterations, sub_queries = f"ERROR: {e}", 0.0, 0, 0
 
-    stats = (
-        f"{iterations} step{'s' if iterations != 1 else ''} · "
-        f"{sub_queries} sub-quer{'ies' if sub_queries != 1 else 'y'} · "
-        f"{rlm_time:.1f}s"
-    )
-    display_box(f"✔ RLM Result  {DIM}{stats}", rlm_text, GREEN)
-    print()
+    if verbose:
+        stats = (
+            f"{iterations} step{'s' if iterations != 1 else ''} · "
+            f"{sub_queries} sub-quer{'ies' if sub_queries != 1 else 'y'} · "
+            f"{rlm_time:.1f}s"
+        )
+        display_box(f"✔ RLM Result  {DIM}{stats}", rlm_text, GREEN)
+        print()
+
+    # ── Score ────────────────────────────────────────────────────────────────
+    direct_scores = score_result(direct_text, expected, question)
+    rlm_scores = score_result(rlm_text, expected, question)
 
     # ── Comparison summary ──────────────────────────────────────────────────
-    sum_bar = "═" * (BOX_W + 2)
-    print(f"  {BOLD}{sum_bar}{RESET}")
-    expected_str = json.dumps(expected) if isinstance(expected, list) else str(expected)
-    print(f"  {YELLOW}{BOLD}Expected:{RESET} {expected_str}")
-    print(f"  {BOLD}{'─' * (BOX_W + 2)}{RESET}")
+    if verbose:
+        sum_bar = "═" * (BOX_W + 2)
+        print(f"  {BOLD}{sum_bar}{RESET}")
+        expected_str = json.dumps(expected) if isinstance(expected, list) else str(expected)
+        print(f"  {YELLOW}{BOLD}Expected:{RESET} {expected_str}")
+        print(f"  {BOLD}{'─' * (BOX_W + 2)}{RESET}")
 
-    sum_max_w = BOX_W + 2
-    print(f"  {MAGENTA}{BOLD}Direct LLM{RESET} {DIM}({direct_time:.1f}s){RESET}")
-    for line in direct_text.split("\n"):
-        for chunk in wrap_text(line, sum_max_w):
-            print(f"  {chunk}")
-    print(f"  {BOLD}{'─' * (BOX_W + 2)}{RESET}")
+        sum_max_w = BOX_W + 2
+        d_judge = direct_scores.get('judge', -1)
+        d_judge_str = f" J={d_judge:.1f}" if d_judge >= 0 else ""
+        direct_score_str = f"F1={direct_scores['f1']:.2f} C={direct_scores['contains']:.0f}{d_judge_str}"
+        print(f"  {MAGENTA}{BOLD}Direct LLM{RESET} {DIM}({direct_time:.1f}s) [{direct_score_str}]{RESET}")
+        for line in direct_text.split("\n"):
+            for chunk in wrap_text(line, sum_max_w):
+                print(f"  {chunk}")
+        print(f"  {BOLD}{'─' * (BOX_W + 2)}{RESET}")
 
-    print(f"  {GREEN}{BOLD}RLM{RESET} {DIM}({rlm_time:.1f}s, {iterations} iters, {sub_queries} subs){RESET}")
-    for line in rlm_text.split("\n"):
-        for chunk in wrap_text(line, sum_max_w):
-            print(f"  {chunk}")
-    print(f"  {BOLD}{sum_bar}{RESET}")
+        r_judge = rlm_scores.get('judge', -1)
+        r_judge_str = f" J={r_judge:.1f}" if r_judge >= 0 else ""
+        rlm_score_str = f"F1={rlm_scores['f1']:.2f} C={rlm_scores['contains']:.0f}{r_judge_str}"
+        print(f"  {GREEN}{BOLD}RLM{RESET} {DIM}({rlm_time:.1f}s, {iterations} iters, {sub_queries} subs) [{rlm_score_str}]{RESET}")
+        for line in rlm_text.split("\n"):
+            for chunk in wrap_text(line, sum_max_w):
+                print(f"  {chunk}")
+        print(f"  {BOLD}{sum_bar}{RESET}")
+
+    # ── Build result ─────────────────────────────────────────────────────────
+    result = {
+        "benchmark": benchmark_name,
+        "idx": idx,
+        "expected": expected,
+        "contextChars": len(context),
+        "directLlm": {
+            "answer": direct_text,
+            "elapsedS": direct_time,
+            "scores": direct_scores,
+        },
+        "rlm": {
+            "answer": rlm_text,
+            "iterations": iterations,
+            "subQueries": sub_queries,
+            "elapsedS": rlm_time,
+            "scores": rlm_scores,
+        },
+    }
 
     # ── Save trajectory ─────────────────────────────────────────────────────
     traj_dir = Path.cwd() / "trajectories"
@@ -244,16 +314,8 @@ def run_benchmark(
     ts = time.strftime("%Y-%m-%dT%H-%M-%S")
     bench_slug = benchmark_name.lower().replace(" ", "-")
     traj_file = f"benchmark-{bench_slug}-idx{idx}-{ts}.json"
-    (traj_dir / traj_file).write_text(json.dumps({
-        "benchmark": bench_slug,
-        "idx": idx,
-        "expected": expected,
-        "directLlm": {"answer": direct_text, "elapsedS": direct_time},
-        "rlm": {
-            "answer": rlm_text,
-            "iterations": iterations,
-            "subQueries": sub_queries,
-            "elapsedS": rlm_time,
-        },
-    }, indent=2))
-    print(f"\n  {DIM}Saved: {traj_file}{RESET}\n")
+    (traj_dir / traj_file).write_text(json.dumps(result, indent=2))
+    if verbose:
+        print(f"\n  {DIM}Saved: {traj_file}{RESET}\n")
+
+    return result

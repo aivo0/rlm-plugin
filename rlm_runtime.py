@@ -50,7 +50,7 @@ def context_meta(text: str) -> str:
 
 # ── LLM sub-queries ─────────────────────────────────────────────────────────
 
-def llm_query(chunk: str, instruction: str) -> str:
+def llm_query(chunk: str, instruction: str, timeout: int = 120) -> str:
     """Run a synchronous sub-query via claude -p. Returns stdout."""
     prompt = f"{instruction}\n\n---\n\n{chunk}"
     result = subprocess.run(
@@ -58,13 +58,14 @@ def llm_query(chunk: str, instruction: str) -> str:
         input=prompt,
         capture_output=True,
         text=True,
+        timeout=timeout,
     )
     if result.returncode != 0:
         raise RuntimeError(f"claude -p failed (rc={result.returncode}): {result.stderr}")
     return result.stdout.strip()
 
 
-async def async_llm_query(chunk: str, instruction: str) -> str:
+async def async_llm_query(chunk: str, instruction: str, timeout: int = 120) -> str:
     """Run an async sub-query via claude -p. Use with asyncio.gather() for parallelism."""
     prompt = f"{instruction}\n\n---\n\n{chunk}"
     proc = await asyncio.create_subprocess_exec(
@@ -73,7 +74,14 @@ async def async_llm_query(chunk: str, instruction: str) -> str:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate(input=prompt.encode())
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=prompt.encode()), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"claude -p timed out after {timeout}s")
     if proc.returncode != 0:
         raise RuntimeError(f"claude -p failed (rc={proc.returncode}): {stderr.decode()}")
     return stdout.decode().strip()
