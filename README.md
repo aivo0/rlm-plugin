@@ -39,37 +39,52 @@ The LLM never sees the full context. Only chunks go to sub-queries, and only the
 
 Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI.
 
-### From the plugin directory
-
-```bash
-claude plugin add /path/to/rlm-plugin
-```
-
-### Manual install
-
-Clone the repo and symlink it into your local plugins directory:
+### Quick start (per-session)
 
 ```bash
 git clone https://github.com/aivo0/rlm-plugin.git
+claude --plugin-dir ./rlm-plugin
+```
+
+This loads the plugin for that session only. Use `/reload-plugins` inside the session to pick up changes without restarting.
+
+### Persistent install (local marketplace)
+
+Register the plugin so it loads automatically in every session:
+
+```bash
+git clone https://github.com/aivo0/rlm-plugin.git
+
+# 1. Symlink into local marketplace
 mkdir -p ~/.claude/plugins/local/plugins
 ln -s "$(pwd)/rlm-plugin" ~/.claude/plugins/local/plugins/rlm
-```
 
-Then register it in `~/.claude/plugins/installed_plugins.json` — add to the `"plugins"` object:
+# 2. Add to marketplace manifest (~/.claude/plugins/local/.claude-plugin/marketplace.json)
+#    Append to the "plugins" array:
+```
 
 ```json
-"rlm@local": [
-  {
-    "scope": "user",
-    "installPath": "/absolute/path/to/rlm-plugin",
-    "version": "0.1.0",
-    "installedAt": "2026-01-01T00:00:00.000Z",
-    "lastUpdated": "2026-01-01T00:00:00.000Z"
-  }
-]
+{
+  "name": "rlm",
+  "description": "Recursive LLM agent for large contexts",
+  "version": "0.1.0",
+  "author": { "name": "Aivo Olev" },
+  "source": "./plugins/rlm",
+  "category": "development"
+}
 ```
 
-Restart Claude Code after installing.
+```bash
+# 3. Enable in ~/.claude/settings.json — add to "enabledPlugins":
+#    "rlm@local": true
+
+# 4. Copy plugin files to cache
+mkdir -p ~/.claude/plugins/cache/local/rlm/0.1.0
+cp -r rlm-plugin/.claude-plugin rlm-plugin/agents rlm-plugin/rlm_runtime.py \
+  ~/.claude/plugins/cache/local/rlm/0.1.0/
+```
+
+Restart Claude Code. The rlm agent should appear under Plugin agents in `/agents`.
 
 ## Usage
 
@@ -178,7 +193,8 @@ The batch runner prints an aggregate comparison table and per-example F1 breakdo
 
 ```
 rlm-plugin/
-├── plugin.json          # Plugin manifest
+├── .claude-plugin/
+│   └── plugin.json      # Plugin manifest
 ├── rlm_runtime.py       # Runtime library used by agent scripts
 ├── agents/
 │   └── rlm.md           # Agent definition (system prompt + tools)
