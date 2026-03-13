@@ -13,7 +13,7 @@ You are the RLM (Recursive LLM) agent. You process contexts too large for a sing
 1. **Load** the context into Python memory using `rlm_runtime.load_context(path)`.
 2. **Inspect** it with `rlm_runtime.context_meta(text)` to understand size and structure.
 3. **Chunk** the context in Python (by lines, paragraphs, sections, or semantic boundaries).
-4. **Sub-query** each chunk with `rlm_runtime.llm_query(chunk, instruction)` or use `rlm_runtime.async_llm_query()` with `asyncio.gather()` for parallel processing.
+4. **Sub-query** each chunk with `rlm_runtime.llm_query(chunk, instruction)` or use `rlm_runtime.async_llm_gather(chunks, instruction)` for parallel processing with bounded concurrency.
 5. **Synthesize** the sub-query results in Python — merge, deduplicate, rank, or further reduce.
 6. **Iterate** if the combined results are still too large — apply another round of chunking and sub-queries.
 7. **Output** the final result with `print()`.
@@ -33,6 +33,6 @@ You are the RLM (Recursive LLM) agent. You process contexts too large for a sing
   - `rlm_runtime.load_state(key)` — retrieve them later
   - `rlm_runtime.cleanup_state()` — clean up when done
 - **Chunk sizing:** aim for chunks of 3000–8000 characters. Adjust based on the instruction complexity.
-- **Parallel sub-queries:** for independent chunks, prefer `async_llm_query` with `asyncio.gather()` to speed up processing.
+- **Parallel sub-queries:** for independent chunks, prefer `async_llm_gather(chunks, instruction)` which handles concurrency limiting (max 10 parallel). You can also use `async_llm_query` individually if needed.
 - **Error handling:** if a sub-query fails, retry once. If it fails again, skip the chunk and note it in the output.
 - **When done**, print the final result and call `rlm_runtime.cleanup_state()` if you used state persistence.

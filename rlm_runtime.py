@@ -17,6 +17,7 @@ from pathlib import Path
 _STATE_DIR = Path(tempfile.gettempdir()) / f"rlm_state_{os.getpid()}"
 
 PREVIEW_LINES = 20
+MAX_CONCURRENT_QUERIES = 10
 
 
 # ── Context helpers ──────────────────────────────────────────────────────────
@@ -85,6 +86,40 @@ async def async_llm_query(chunk: str, instruction: str, timeout: int = 120) -> s
     if proc.returncode != 0:
         raise RuntimeError(f"claude -p failed (rc={proc.returncode}): {stderr.decode()}")
     return stdout.decode().strip()
+
+
+# ── Concurrency helpers ──────────────────────────────────────────────────────
+
+_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Lazy-init semaphore (must be created inside a running event loop)."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
+    return _semaphore
+
+
+async def async_llm_gather(
+    chunks: list[str],
+    instruction: str,
+    timeout: int = 120,
+) -> list[str | Exception]:
+    """Run multiple async sub-queries with bounded concurrency.
+
+    Returns results in the same order as chunks. Failed queries return
+    the Exception instead of a string.
+    """
+    sem = _get_semaphore()
+
+    async def _limited(chunk: str) -> str:
+        async with sem:
+            return await async_llm_query(chunk, instruction, timeout=timeout)
+
+    return await asyncio.gather(
+        *[_limited(c) for c in chunks], return_exceptions=True
+    )
 
 
 # ── State persistence ────────────────────────────────────────────────────────

@@ -103,11 +103,7 @@ async def run_rlm(context: str, question: str, verbose: bool = True) -> tuple[st
     if verbose:
         spinner.start(f"Processing {n_chunks} chunks")
 
-    tasks = [
-        rlm_runtime.async_llm_query(chunk, instruction)
-        for chunk in chunks
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await rlm_runtime.async_llm_gather(chunks, instruction)
     spinner.stop()
 
     # Filter out errors and empty results
@@ -153,11 +149,7 @@ async def run_rlm(context: str, question: str, verbose: bool = True) -> tuple[st
             )
             if verbose:
                 spinner.start(f"Reducing {len(sub_chunks)} sub-results")
-            reduce_tasks = [
-                rlm_runtime.async_llm_query(sc, reduce_instruction)
-                for sc in sub_chunks
-            ]
-            reduced = await asyncio.gather(*reduce_tasks, return_exceptions=True)
+            reduced = await rlm_runtime.async_llm_gather(sub_chunks, reduce_instruction)
             spinner.stop()
 
             reduced_text = "\n\n".join(
