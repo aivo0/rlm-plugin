@@ -1,0 +1,6 @@
+{
+  "name": "rlm",
+  "version": "0.1.0",
+  "description": "Recursive LLM agent — processes large contexts through iterative Python code generation, chunking, and sub-queries via claude -p",
+  "agents": ["agents/rlm.md"]
+}
